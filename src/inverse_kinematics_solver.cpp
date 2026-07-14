@@ -6,16 +6,17 @@ Servo SERVO_B;
 Servo SERVO_S;
 Servo SERVO_E;
 
-// Save fixed arm link lengths as global constants
-const double link_A = 0.2;
-const double link_B = 0.15;
+// Save fixed arm link lengths as global constants (cm)
+const double link_A = 20;
+const double link_B = 15;
 
-// For testing, use fixed target coordinates
-const double x_p = 0.1;
-const double y_p = 0.15;
-const double z_p = 0.1;
-// Calculate radius of target point from origin (the shoulder in this case)
-double r = sqrt(sq(x_p) + sq(y_p) + sq(z_p));
+// Save starting angle which servos move to on startup; for now 90 deg.
+const double START_ANG = 90;
+
+// For testing, use fixed target coordinates (cm)
+const double x_p = 0;
+const double y_p = 0;
+const double z_p = 35;
 
 void setup() {
     // Attach base, shoulder, and elbow servo to respective PWM pins on Arduino/ESP32
@@ -23,19 +24,36 @@ void setup() {
     SERVO_S.attach(10);
     SERVO_E.attach(11);
 
+    // On start up, all three servos start at 90 degrees, 
+    SERVO_B.write(START_ANG);
+    SERVO_S.write(START_ANG);
+    SERVO_E.write(START_ANG);
+
     // Set baud rate
     Serial.begin(9600);
+
+    delay(500);
 }
 
 void loop() {
+    if (!isReachable(x_p, y_p, z_p)) {
+        Serial.println("Target unreachable. Holding previous position.");
+        Serial.print("---");
+        delay(4000);
+        return;
+    }
+
+    // Calculate radius of target point from origin (the shoulder in this case)
+    double r = sqrt(sq(x_p) + sq(y_p) + sq(z_p));
+
     // Calculate SERVO_B (base) angle using target coordinates
     double theta_B = rad2deg(atan2(y_p, x_p));
 
     // Calculate SERVO_S (shoulder) angle using law of cosines
-    double theta_S = rad2deg(get_shoulder_angle());
+    double theta_S = rad2deg(get_shoulder_angle(r, x_p, y_p));
     
     //Calculate SERVO_E (elbow) angle using law of cosines
-    double theta_E = rad2deg(get_elbow_angle());
+    double theta_E = rad2deg(get_elbow_angle(r));
 
     Serial.print("Base Angle: ");
     Serial.println(theta_B);
@@ -43,15 +61,23 @@ void loop() {
     Serial.println(theta_S);
     Serial.print("Elbow Angle: ");
     Serial.println(theta_E);
-    
+    Serial.print("---");
     delay(4000);
+
+    // Map math angles into each servo's desired output, rounding since Servo.write() uses truncation instead
+    int servoB_cmd = constrain((int)round(theta_B + 90), 0, 180);
+    int servoS_cmd = constrain((int)round(theta_S + 90), 0, 180);
+
+    // Accounting for 2:1 gear setup for the base servo, the desired angle is divided by half to constrain 
+    // servo output to within (-90 deg, 90 deg)
+    int servoE_cmd = 0.5 * constrain((int)round(theta_E), 0, 360);
 }
 
 double rad2deg(double radians){
     return radians * (180/(PI));
 }
 
-double get_elbow_angle(){
+double get_elbow_angle(double r){
     // D,E = cos(alpha),sin(alpha) where alpha is the interior angle between the two arm links
     double D = (sq(link_A) + sq(link_B) - sq(r)) / (2 * link_A * link_B);
     double E = sqrt(1 - sq(D));
@@ -63,7 +89,8 @@ double get_elbow_angle(){
     return PI - alpha;
 }
 
-double get_shoulder_angle(){
+// Note that x_p and y_p are currently global doubles, but in the future this wouldn't be the case
+double get_shoulder_angle(double r, double x_p, double y_p){
     // Calculate target vector length when projected onto xy plane
     double ground_dist = sqrt(sq(x_p) + sq(y_p));
     
@@ -74,9 +101,18 @@ double get_shoulder_angle(){
     double K = (sq(link_A) + sq(r) - sq(link_B)) / (2 * link_A * r);
     double L = sqrt(1 - sq(K));
 
-    // divide K/L for tan(alpha) and get alpha in radians with arctangent.
-    double gamma = atan2(K,L);
+    // divide L/K for tan(alpha) and get alpha in radians with arctangent.
+    double gamma = atan2(L,K);
 
     // theta_S is the difference between the angles between target vector and the ground and between arm link 1 and the target vector 
     return beta - gamma;
 }
+
+// check if an target coordinate is even within theoretical reach of the arm; set the origin at the shoulder 
+bool isReachable(double x, double y, double z){
+    double r = sqrt(sq(x) + sq(y) + sq(z));
+    double maxReach = link_A + link_B;
+    double minReach = fabs(link_A - link_B);
+    return (r <= maxReach && r >= minReach);
+}
+
