@@ -50,10 +50,10 @@ void loop() {
     double theta_B = rad2deg(atan2(y_p, x_p));
 
     // Calculate SERVO_S (shoulder) angle using law of cosines
-    double theta_S = rad2deg(get_shoulder_angle(r, x_p, y_p));
+    double theta_S = rad2deg(getShoulderAngle(r, x_p, y_p));
     
     //Calculate SERVO_E (elbow) angle using law of cosines
-    double theta_E = rad2deg(get_elbow_angle(r));
+    double theta_E = rad2deg(getElbowAngle(r));
 
     Serial.print("Base Angle: ");
     Serial.println(theta_B);
@@ -64,7 +64,8 @@ void loop() {
     Serial.print("---");
     delay(4000);
 
-    // Map math angles into each servo's desired output, rounding since Servo.write() uses truncation instead
+    // Map & constrain angles for each servo's output, rounding since 
+    // Servo.write() uses truncation on the raw input instead, introducing error
     int servoB_cmd = constrain((int)round(theta_B + 90), 0, 180);
     int servoS_cmd = constrain((int)round(theta_S + 90), 0, 180);
 
@@ -77,7 +78,7 @@ double rad2deg(double radians){
     return radians * (180/(PI));
 }
 
-double get_elbow_angle(double r){
+double getElbowAngle(double r){
     // D,E = cos(alpha),sin(alpha) where alpha is the interior angle between the two arm links
     double D = (sq(link_A) + sq(link_B) - sq(r)) / (2 * link_A * link_B);
     double E = sqrt(1 - sq(D));
@@ -90,7 +91,7 @@ double get_elbow_angle(double r){
 }
 
 // Note that x_p and y_p are currently global doubles, but in the future this wouldn't be the case
-double get_shoulder_angle(double r, double x_p, double y_p){
+double getShoulderAngle(double r, double x_p, double y_p){
     // Calculate target vector length when projected onto xy plane
     double ground_dist = sqrt(sq(x_p) + sq(y_p));
     
@@ -116,3 +117,22 @@ bool isReachable(double x, double y, double z){
     return (r <= maxReach && r >= minReach);
 }
 
+void moveServosSmooth(int targetB, int targetS, int targetE){
+    // Originally, the arm would start with the set start angle
+    static int curB = START_ANG, curS = START_ANG, curE = START_ANG;
+
+    // Idea here is that we move at pace with the largest angular difference between desired and saved current angles
+    int steps = max(abs(targetB-curB), max(abs(targetS-curS), abs(targetE-curE))); 
+
+    for(int i = 1; i <= steps; i++){
+        // Increment towards the desired angle in small steps to avoid sudden sharp loads on the motors
+        SERVO_B.write(curB + (long(targetB-curB) * i / steps));
+        SERVO_S.write(curS + (long(targetS-curS) * i / steps));
+        SERVO_B.write(curE + (long(targetE-curE) * i / steps));
+        delayMicroseconds(10);
+    }
+
+    curB = targetB;
+    curS = targetS;
+    curE = targetE;
+}
